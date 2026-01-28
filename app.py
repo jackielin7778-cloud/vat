@@ -4,157 +4,125 @@ import google.generativeai as genai
 import os
 
 # ==========================================
-# 1. 專案名稱：VAT (Value Added Tax)
+# 專案：VAT - 多模式智慧稽核系統
 # ==========================================
-st.set_page_config(page_title="VAT 台灣營業稅模擬系統", layout="wide", page_icon="🇹🇼")
+st.set_page_config(page_title="VAT 智慧稅務系統", layout="wide", page_icon="🇹🇼")
 
-# 設定標題與副標題
-st.title("🇹🇼 VAT 營業稅申報資料模擬檢查系統")
-st.markdown("---")
+# --- 側邊欄：模式切換 ---
+with st.sidebar:
+    st.title("🛡️ VAT 系統選單")
+    app_mode = st.selectbox(
+        "請選擇操作模式",
+        ["🏠 系統首頁", "📤 銷項憑證登錄", "📥 進項憑證登錄", "✈️ 零稅率清單核對"]
+    )
+    st.divider()
+    st.info(f"當前模式: {app_mode}")
+    st.caption("依據《營業稅電子資料申報作業要點》設計")
 
-# 從 Streamlit Secrets 讀取 Gemini API 金鑰
-if "GOOGLE_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-else:
-    st.error("🛑 錯誤：請在 Streamlit Secrets 中設定 GOOGLE_API_KEY。")
-
-# 初始化 Gemini Pro
-model = genai.GenerativeModel('gemini-pro')
-
-# ==========================================
-# 2. 核心邏輯函數 (詳細註解版)
-# ==========================================
-
-def load_rules():
-    """ 讀取 rules.csv，若不存在則提示用戶 """
-    if os.path.exists('rules.csv'):
-        return pd.read_csv('rules.csv')
+# --- 初始化 Gemini 1.5 Flash ---
+def init_gemini():
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+    if api_key:
+        try:
+            genai.configure(api_key=api_key)
+            return genai.GenerativeModel('gemini-1.5-flash')
+        except Exception as e:
+            st.error(f"AI 配置失敗: {e}")
     return None
 
-def check_taiwan_tax_id_v2(tax_id):
-    """
-    台灣統一編號最新檢查邏輯 (除以 5)
-    1. 統編 8 位數分別乘以權數 [1, 2, 1, 2, 1, 2, 4, 1]
-    2. 取乘積之十位與個位相加
-    3. 最終總和必須能被 5 整除 (餘數為 0)
-    """
-    if not tax_id:
-        return True, "非營業人 (免輸入統編)"
-    
-    if len(tax_id) != 8 or not tax_id.isdigit():
-        return False, "統編格式錯誤：需為 8 位數字"
-    
-    weight = [1, 2, 1, 2, 1, 2, 4, 1]
-    
-    def get_digit_sum(val):
-        # 拆解十位與個位相加 (例如 28 -> 2+8=10)
-        return (val // 10) + (val % 10)
+model = init_gemini()
 
-    # 加權乘積之和
-    total_sum = sum(get_digit_sum(int(tax_id[i]) * weight[i]) for i in range(8))
-    
-    # 邏輯判斷：除以 5 整除
-    if total_sum % 5 == 0:
-        return True, "統編正確"
-    
-    # 特殊處理：倒數第二位為 '7' 的舊案邏輯，總和+1若能被5整除也過
-    if tax_id[6] == '7' and (total_sum + 1) % 5 == 0:
-        return True, "統編正確 (含特殊號碼 7)"
-            
-    return False, f"統編邏輯異常 (加權和 {total_sum} 無法被 5 整除)"
+# --- 統編檢查邏輯 (除以 5) ---
+def check_vat_id(vat_id):
+    if not vat_id or vat_id.strip() == "": return True, "非營業人 (免填)"
+    if len(vat_id) != 8 or not vat_id.isdigit():
+        return False, "格式錯誤：需為 8 位數字"
+    weights = [1, 2, 1, 2, 1, 2, 4, 1]
+    total = sum(((int(vat_id[i]) * weights[i]) // 10 + (int(vat_id[i]) * weights[i]) % 10) for i in range(8))
+    if total % 5 == 0 or (vat_id[6] == '7' and (total + 1) % 5 == 0):
+        return True, "統編邏輯正確"
+    return False, "統編加權檢核失敗"
+
+# --- 讀取規則檔 ---
+rules_df = pd.read_csv('rules.csv') if os.path.exists('rules.csv') else pd.DataFrame()
 
 # ==========================================
-# 3. Streamlit 介面佈局
+# 模式 1：系統首頁
 # ==========================================
-
-# 載入外部規則
-rules_df = load_rules()
-
-with st.sidebar:
-    st.header("📊 VAT 專案選單")
-    # 提供進銷項選擇
-    category = st.radio("申報類別", ["銷項 (Output)", "進項 (Input)"])
-    st.markdown("---")
-    st.caption("依據《銷項憑證營業稅登錄說明》規範設計")
-
-# 主輸入區塊
-st.subheader(f"🔍 資料錄入模擬：{category}")
-
-with st.form("vat_form"):
-    col1, col2, col3 = st.columns(3)
+if app_mode == "🏠 系統首頁":
+    st.header("歡迎使用 VAT 營業稅模擬申報測試系統")
+    st.markdown("""
+    本系統專為客戶模擬台灣營業稅申報資料登錄而設計，支援以下功能：
+    - **合規稽核**：自動比對 rules.csv 設定之稅務邏輯。
+    - **AI 建議**：利用 Gemini 1.5 提供具體的法規修正建議。
+    - **統編檢查**：內建財政部最新加權種子法 (除以 5 邏輯)。
+    """)
     
-    with col1:
-        st.markdown("##### [基本資料]")
-        # 依 PDF 文件更新格式代碼
-        invoice_type = st.selectbox("格式代號", ["31", "32", "33", "34", "35", "36", "37", "38", "21", "22", "25"])
-        tax_id = st.text_input("買受人統編 (8碼)", max_chars=8)
-        invoice_no = st.text_input("憑證號碼 (10碼)", max_chars=10)
-        
-    with col2:
-        st.markdown("##### [金額資訊]")
-        sales_amt = st.number_input("銷售金額 (未稅/總計)", min_value=0)
-        tax_amt = st.number_input("稅額", min_value=0)
-        is_aggregate = st.checkbox("彙加註記 (Aggregate)")
-        
-    with col3:
-        st.markdown("##### [日期與類別]")
-        date_ym = st.text_input("開立年月 (如 11302)", max_chars=5)
-        tax_type = st.selectbox("課稅別", ["1:應稅", "2:零稅率", "3:免稅", "F:作廢", "D:空白"])
-
-    # 表單送出按鈕
-    submit_btn = st.form_submit_button("🚀 執行 VAT 合規檢查")
 
 # ==========================================
-# 4. 檢查邏輯與 AI 分析回饋
+# 模式 2：銷項憑證登錄
 # ==========================================
+elif app_mode == "📤 銷項憑證登錄":
+    st.header("📤 銷項憑證登錄與稽核")
+    with st.form("out_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            f_code = st.selectbox("格式代號", ["31", "32", "33", "34", "35", "36", "37", "38"])
+            v_id = st.text_input("買受人統編", max_chars=8)
+            v_no = st.text_input("憑證號碼")
+        with c2:
+            v_date = st.text_input("開立年月 (如 11302)", max_chars=5)
+            v_amt = st.number_input("銷售金額", min_value=0)
+            v_tax = st.number_input("營業稅額", min_value=0)
+        is_agg = st.checkbox("彙加註記 (如為折讓單33/34/38則不可勾選)")
+        submit = st.form_submit_button("🚀 執行 AI 稽核")
 
-if submit_btn:
-    # 第一步：執行統編硬核檢查
-    is_id_ok, id_msg = check_taiwan_tax_id_v2(tax_id)
-    
-    # 第二步：準備 AI 分析需要的 Context
-    rules_text = rules_df.to_string(index=False) if rules_df is not None else "依台灣稅務規範。"
-    
-    # 第三步：優化 AI Prompt (針對 VAT 專案)
-    analysis_prompt = f"""
-    你是台灣營業稅務專家。請審核專案 VAT 的以下數據是否符合《銷項憑證營業稅登錄說明》：
-    
-    【系統規則 (rules.csv)】:
-    {rules_text}
-    
-    【使用者資料】:
-    - 格式代號: {invoice_type}
-    - 統編: {tax_id} (邏輯檢核結果: {id_msg})
-    - 銷售額: {sales_amt}
-    - 稅額: {tax_amt}
-    - 開立年月: {date_ym}
-    - 課稅別: {tax_type}
-    - 彙加註記: {is_aggregate}
-    
-    請依以下結構回覆分析：
-    1. **合規診斷**：(例如：格式32稅額應為0、折讓單33/34/38不得彙加、銷售額計算等)。
-    2. **異常提醒**：若有違反規定請明確指出。
-    3. **具體修正建議**：引導使用者完成正確申報。
-    """
+    if submit:
+        is_ok, msg = check_vat_id(v_id)
+        prompt = f"你是稅務專家。稽核資料：格式{f_code}, 統編{v_id}({msg}), 金額{v_amt}, 稅額{v_tax}, 日期{v_date}。請根據《銷項憑證登錄說明》給予建議。"
+        with st.spinner("AI 診斷中..."):
+            res = model.generate_content(prompt)
+            st.info(res.text)
 
-    with st.spinner("AI 正在稽核中..."):
-        try:
-            response = model.generate_content(analysis_prompt)
-            
-            # 顯示統編結果
-            if not is_id_ok:
-                st.error(f"📍 統編檢核：{id_msg}")
-            else:
-                st.success(f"📍 統編檢核：{id_msg}")
-            
-            # 顯示 AI 報告
-            st.markdown("---")
-            st.markdown("### 🤖 VAT AI 稽核分析報告")
-            st.info(response.text)
-            
-        except Exception as e:
-            st.error(f"發生錯誤：{e}")
+# ==========================================
+# 模式 3：進項憑證登錄
+# ==========================================
+elif app_mode == "📥 進項憑證登錄":
+    st.header("📥 進項憑證登錄與扣抵檢查")
+    with st.form("in_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            f_code = st.selectbox("格式代號", ["21", "22", "23", "24", "25", "26", "27", "28"])
+            v_id = st.text_input("買受人統編 (本公司)", max_chars=8)
+            v_no = st.text_input("憑證號碼")
+        with c2:
+            v_amt = st.number_input("銷售金額 (未稅)", min_value=0)
+            v_tax = st.number_input("可扣抵稅額", min_value=0)
+            deduct_type = st.selectbox("扣抵代號", ["1:進項稅額可扣抵之進貨及費用", "2:進項稅額可扣抵之固定資產", "3:不可扣抵"])
+        submit = st.form_submit_button("🔍 檢查扣抵資格")
 
-# 頁尾
+    if submit:
+        prompt = f"你是會計師。稽核進項資料：格式{f_code}, 扣抵代號{deduct_type}, 金額{v_amt}, 稅額{v_tax}。請判斷其稅額計算是否正確及是否符合扣抵規定。"
+        with st.spinner("AI 分析中..."):
+            res = model.generate_content(prompt)
+            st.success(res.text)
+
+# ==========================================
+# 模式 4：零稅率清單核對
+# ==========================================
+elif app_mode == "✈️ 零稅率清單核對":
+    st.header("✈️ 零稅率與出口明細檢查")
+    with st.form("zero_form"):
+        export_type = st.selectbox("通關方式", ["1:經海關出口", "2:非經海關出口"])
+        doc_no = st.text_input("報單號碼/證明文件編號")
+        export_amt = st.number_input("出口金額 (折合新台幣)", min_value=0)
+        submit = st.form_submit_button("🛡️ 檢查零稅率合規性")
+    
+    if submit:
+        prompt = f"稽核零稅率資料：通關方式{export_type}, 報單號碼{doc_no}, 金額{export_amt}。請說明外銷零稅率之申報要點。"
+        with st.spinner("檢查中..."):
+            res = model.generate_content(prompt)
+            st.warning(res.text)
+
 st.divider()
-st.caption("VAT Project | 2026 模擬測試版本")
+st.caption("VAT Project | 2026 模擬測試版 | 使用 Gemini 1.5 Flash")
