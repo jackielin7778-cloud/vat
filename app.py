@@ -107,3 +107,46 @@ elif app_mode == "📤 銷項憑證登錄":
         [基本資料]
         - 格式: {f_code} | 開立日期: {v_date_full} | 課稅別: {tax_type}
         - 銷貨人統編: {tax_id_seller} | 買受人統編: {tax_id_buyer}
+        - 發票區間: {inv_start} 至 {inv_end}
+        - 金額: {v_amt} | 稅額: {v_tax} | 通關方式: {customs_mode} | 彙加: {is_agg}
+        
+        [檢查標準]
+        1. 稅額檢核：課稅別為'1:應稅'時，稅額是否等於金額的 5%？
+        2. 零稅率檢核：課稅別為'2:零稅率'時，通關方式不可為'0'。
+        3. 發票號碼：訖號是否小於起號？(起:{inv_start}, 訖:{inv_end})。
+        4. 格式限制：彙加註記與格式{f_code}是否衝突？
+        5. 銷貨人統編是否正確？({tax_id_seller})
+        """
+        
+        with st.spinner("多模組 AI 驗證中..."):
+            result = call_vat_ai_v3(prompt)
+            if not seller_ok: st.error(f"📍 銷貨人統編異常")
+            if not buyer_ok: st.warning(f"📍 買受人統編檢核注意")
+            st.markdown("---")
+            st.info(result)
+
+elif app_mode == "📥 進項憑證登錄":
+    st.header("📥 進項憑證登錄 (含扣抵代號)")
+    with st.form("vat_in_v31"):
+        col1, col2 = st.columns(2)
+        with col1:
+            f_code_in = st.selectbox("進項格式", ["21", "22", "23", "25", "28"])
+            deduct_id = st.selectbox("扣抵代號", ["1:進項可扣抵進貨費用", "2:進項可扣抵固定資產", "3:不可扣抵(不可報)"])
+        with col2:
+            v_amt_in = st.number_input("金額 (未稅)", min_value=0)
+            v_tax_in = st.number_input("稅額", min_value=0)
+        
+        submit_in = st.form_submit_button("🔍 執行進項稽核")
+    
+    if submit_in:
+        prompt_in = f"稽核進項資料：格式{f_code_in}, 扣抵代號{deduct_id}, 金額{v_amt_in}, 稅額{v_tax_in}。請判斷其稅額計算與扣抵合法性。"
+        with st.spinner("AI 分析中..."):
+            result = call_vat_ai_v3(prompt_in)
+            st.markdown(result)
+
+elif app_mode == "✈️ 零稅率清單":
+    st.header("✈️ 零稅率出口明細")
+    st.info("此處欄位會根據'課稅別: 2'自動對齊通關方式與報單號碼。")
+
+st.divider()
+st.caption("VAT Project v3.1 | 2026 | 已鎖定多模組驗證機制")
